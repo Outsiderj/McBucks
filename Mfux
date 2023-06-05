@@ -35,6 +35,7 @@ players_alive = {}
 default_names = ["Aerith", "Barrowin", "Cassius", "Eldeth", "Gorion", "Himo", "Jarek",
         "Kethryllia", "Lia", "Milo", "Nerys", "Pikel", "Rolen", "Shandie",
         "Talindra", "Ugi"]
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
@@ -273,7 +274,9 @@ async def player_turn(ctx, player):
         else:
             # The player is already eliminated, end the turn
             break
-            
+# Global variable to keep track of solo games
+solo_players = {}
+
 @bot.command()
 async def solo(ctx):
     global players, solo_players
@@ -289,8 +292,20 @@ async def solo(ctx):
         await ctx.send("You're already in a solo game.")
         return
 
+    # Present class selection buttons
+    class_selection_view = discord.ui.View()
+    class_selection_view.add_item(discord.ui.Button(style=discord.ButtonStyle.green, label='Warrior', custom_id='warrior'))
+    class_selection_view.add_item(discord.ui.Button(style=discord.ButtonStyle.green, label='Wizard', custom_id='wizard'))
+    class_selection_view.add_item(discord.ui.Button(style=discord.ButtonStyle.green, label='Bard', custom_id='bard'))
+    class_selection_view.add_item(discord.ui.Button(style=discord.ButtonStyle.green, label='Thief', custom_id='thief'))
+    await ctx.send("Choose your class:", view=class_selection_view)
+    # Wait for player to select class
+    interaction = await bot.wait_for('interaction', check=lambda i: i.user.id == user_id and isinstance(i, discord.Button) and i.custom_id in  ['warrior', 'wizard', 'bard', 'thief'])
+    player_class = interaction.data['custom_id']
+    await interaction.response.send_message(f"You chose the {player_class.capitalize()} class!")
+
     # Create player
-    player = Player(user_id=user_id, player_class='warrior')  # Adjust this line as needed
+    player = Player(user_id=user_id, name=ctx.author.name, player_class=player_class)
     solo_players[user_id] = player
 
     # Create enemy
@@ -326,7 +341,7 @@ async def solo(ctx):
 
     # Remove player from solo game
     del solo_players[user_id]
-
+          
 def generate_action_buttons(player):
     if player.user_id not in players:
         return []
@@ -632,7 +647,7 @@ async def handle_use_item(ctx, player):
     else:
         await interaction.response.send_message("Invalid item selected.")
     await item_message.edit(view=None)  
-    
+  
 def calculate_damage(player, target, spell=None, song=None):
     base_damage = 0
     if player.weapon:
