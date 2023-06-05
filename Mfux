@@ -273,6 +273,60 @@ async def player_turn(ctx, player):
         else:
             # The player is already eliminated, end the turn
             break
+            
+@bot.command()
+async def solo(ctx):
+    global players, solo_players
+    user_id = ctx.author.id
+
+    # Check if player is already in a PvP game
+    if user_id in players:
+        await ctx.send("You can't start a solo game while you're in a PvP game.")
+        return
+
+    # Check if player is already in a solo game
+    if user_id in solo_players:
+        await ctx.send("You're already in a solo game.")
+        return
+
+    # Create player
+    player = Player(user_id=user_id, player_class='warrior')  # Adjust this line as needed
+    solo_players[user_id] = player
+
+    # Create enemy
+    enemy_classes = ['drunk dwarf', 'tweaker elf', 'hill yinzer', 'angry loudmouth']
+    enemy_class = random.choice(enemy_classes)
+    enemy = Player(user_id='enemy', player_class=enemy_class)
+    enemy.weapon = random.choice(weapons)  # Assuming 'weapons' is a list of all possible weapons
+
+    # Start battle
+    while player.hp > 0 and enemy.hp > 0:
+        # Player's turn
+        await ctx.send(f"It's your turn, {ctx.author.name}!")
+        # Here you should wait for the player's action (attack, use item, etc.)
+        # You can reuse the code from your PvP mode
+
+        # Enemy's turn
+        if enemy.hp <= 0:
+            break
+        await ctx.send("It's the enemy's turn!")
+        if enemy.hp < 20:  # Enemy decides to heal if HP is low
+            enemy.hp += 10  # Adjust this value as needed
+            await ctx.send(f"The {enemy.player_class} healed and now has {enemy.hp} HP.")
+        else:  # Enemy decides to attack
+            damage = calculate_damage(enemy, player)
+            player.hp -= damage
+            await ctx.send(f"The {enemy.player_class} attacked and dealt {damage} damage!")
+
+    # End of battle
+    if player.hp <= 0:
+        await ctx.send(f"{ctx.author.name}, you have been defeated by the {enemy.player_class}.")
+    else:
+        await ctx.send(f"{ctx.author.name}, you have defeated the {enemy.player_class}!")
+
+    # Remove player from solo game
+    del solo_players[user_id]
+
 def generate_action_buttons(player):
     if player.user_id not in players:
         return []
@@ -578,7 +632,7 @@ async def handle_use_item(ctx, player):
     else:
         await interaction.response.send_message("Invalid item selected.")
     await item_message.edit(view=None)  
-  
+    
 def calculate_damage(player, target, spell=None, song=None):
     base_damage = 0
     if player.weapon:
