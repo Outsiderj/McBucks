@@ -189,6 +189,53 @@ async def join(ctx, *, name=None):
     if len(players) >= 2 and not game_started and not countdown_started:
         countdown_started = True
         asyncio.create_task(start_game(ctx))
+@bot.command()
+async def solo(ctx, *, name=None):
+    global players
+    if ctx.author.id not in players:
+        if name is None:
+            name = random.choice(default_names)
+        elif len(name.split(' ')) > 3 or len(name) > 30:
+            await ctx.send("Invalid name. Please enter a name with up to 30 characters and a maximum of 2 spaces.")
+            return
+        player_class = random.choice(['warrior', 'thief', 'wizard', 'bard'])
+        player = Player(ctx.author.id, name, player_class)
+        player.weapon = random.choice(class_weapons[player_class])
+        weapon_name = player.weapon.name
+        players[ctx.author.id] = player
+        await ctx.send(f'You have chosen the {player_class.capitalize()} class, your weapon is: {weapon_name}. Welcome to the game!')
+        await ctx.send(f"{name} has joined the game!")
+        enemy_name = random.choice(['Drunk Dwarf', 'Tweaker Elf', 'Hill Yinzer', 'Angry Loudmouth'])
+        enemy_class = random.choice(['warrior', 'thief', 'wizard', 'bard'])
+        enemy = Player(0, enemy_name, enemy_class)
+        enemy.weapon = random.choice(class_weapons[enemy_class])
+        players[0] = enemy
+        await ctx.send(f'{enemy_name}, the {enemy_class.capitalize()}, has joined the game! His weapon is: {enemy.weapon.name}.')
+        await start_solo_game(ctx)
+    else:
+        await ctx.send("You have already joined the game!")
+
+async def start_solo_game(ctx):
+    player = players[ctx.author.id]
+    enemy = players[0]
+    while player.hp > 0 and enemy.hp > 0:
+        await player_turn(ctx, player)
+        if enemy.hp > 0:
+            await enemy_turn(ctx, enemy)
+    if player.hp <= 0:
+        await ctx.send(f'{player.name} has died. {enemy.name} is the victor!')
+    else:
+        await ctx.send(f'{enemy.name} has died. {player.name} is the victor!')
+    del players[ctx.author.id]
+    del players[0]
+
+async def enemy_turn(ctx, enemy):
+    player = players[ctx.author.id]
+    if enemy.hp < 10:
+        await handle_heal(ctx, enemy)
+    else:
+        await handle_attack(ctx, enemy)
+    await ctx.send(f'{enemy.name} has finished their turn.')
 
 async def start_game(ctx):
     # Countdown before starting the game
@@ -274,7 +321,71 @@ async def player_turn(ctx, player):
         else:
             # The player is already eliminated, end the turn
             break
+def generate_action_buttons(player):
+    if player.user_id not in players:
+        return []
+    # Check if the player is still alive
+    if player.hp < 1:
+        return []
+    hp_text = f'HP: {player.hp}/{player.calculate_initial_hp()}'
+    mana_text = ''
+    
+    if player.player_class == 'wizard':
+        mana_text = f'Mana: {player.mana}/{player.calculate_initial_mana()}'
+    
+        
+    hp_mana_row = discord.ui.Button(style=discord.ButtonStyle.blurple, label=f'{hp_text}  {mana_text}', disabled=True)
+    action_buttons = [hp_mana_row]
+    common_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.blurple, label='Attack', custom_id='attack'),
+        discord.ui.Button(style=discord.ButtonStyle.blurple, label='Use Item', custom_id='use_item'),
+        discord.ui.Button(style=discord.ButtonStyle.blurple, label='Stats', custom_id='stats')
+    ]
+    action_row = common_buttons  # Initialize action_row with the common buttons
 
+    if player.player_class == 'warrior':
+        class_specific_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='Dodge', custom_id='dodge')
+        ]
+        action_row += class_specific_buttons  # Add the class-specific buttons to action_row
+
+    elif player.player_class == 'thief':
+        class_specific_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='Hide', custom_id='hide')
+        ]
+        action_row += class_specific_buttons  # Add the class-specific buttons to action_row
+
+    elif player.player_class == 'bard':
+        class_specific_buttons = [
+            discord.ui.Button(
+                style=discord.ButtonStyle.red if song and 'damage' in song else 
+                      discord.ButtonStyle.green if song and 'heal' in song else 
+                      discord.ButtonStyle.blurple,
+                label=song['name'], 
+                custom_id=song['name']
+            )
+            for song in player.songs
+        ]
+        action_row += class_specific_buttons
+    elif player.player_class == 'wizard':
+        class_specific_buttons = [
+            discord.ui.Button(
+                style=discord.ButtonStyle.red if 'damage' in spell else 
+                      discord.ButtonStyle.green if 'heal' in spell else 
+                      discord.ButtonStyle.blurple,
+                label=spell['name'], 
+                custom_id=spell['name']
+            )
+            for spell in player.spells
+        ]
+        action_row += class_specific_buttons  # Add the class-specific buttons to action_row
+
+    if player.weapon is not None:
+        weapon_row = discord.ui.Button(style=discord.ButtonStyle.blurple, label=f'Weapon: {player.weapon.name}', disabled=True)
+    else:
+        weapon_row = discord.ui.Button(style=discord.ButtonStyle.blurple, label='Weapon: Not allocated', disabled=True)
+
+    return [hp_mana_row, weapon_row] + action_row
 async def hide_action(ctx, player):
     def target_button_check(interaction):
         return interaction.user.id == player.user_id
@@ -306,6 +417,22 @@ async def hide_action(ctx, player):
     target_user = await bot.fetch_user(target_user_id)
     await target_message.edit(view=None)
 async def handle_attack(ctx, player, spell=None, song=None):
+    if player.user_id == 0:  # This is the bot-controlled enemy
+        target = players[ctx.author.id]  # The enemy always targets the player
+    else:  # This is a real player
+        target_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+            for p in players.values() if p.user_id != player.user_id and p.user_id != 0
+        ]
+        target_view = discord.ui.View()
+        target_view.add_item(*target_buttons)
+        target_message = await ctx.send('Who do you want to attack?', view=target_view)
+        interaction = await bot.wait_for('button_click', check=lambda i: i.message.id == target_message.id and i.user.id == player.user_id)
+        target_id = int(interaction.data['custom_id'])
+        target0 = players[target_id]
+    damage = player.attack(target)
+    await ctx.send(f'{player.name} attacks {target.name} for {damage} damage!')
+
     def target_button_check(interaction):
         return interaction.user.id == player.user_id
     target_buttons = [
