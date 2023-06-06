@@ -416,7 +416,7 @@ async def hide_action(ctx, player):
         await interaction.response.send_message(f"The {player.player_class} successfully hid, dealt {damage} damage to {target_user.name}, and cannot be hit by them for 1 turn.")
     target_user = await bot.fetch_user(target_user_id)
     await target_message.edit(view=None)
-async def handle_attack(ctx, player, spell=None, song=None):
+async def handle_attack(ctx, player):
     if player.user_id == 0:  # This is the bot-controlled enemy
         target = players[ctx.author.id]  # The enemy always targets the player
     else:  # This is a real player
@@ -424,14 +424,18 @@ async def handle_attack(ctx, player, spell=None, song=None):
             discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
             for p in players.values() if p.user_id != player.user_id and p.user_id != 0
         ]
+        print(f"Target buttons: {target_buttons}")  # Debugging print statement
         target_view = discord.ui.View()
-        target_view.add_item(*target_buttons)
+        for button in target_buttons:
+            target_view.add_item(button)
+        print(f"Target view: {target_view.children}")  # Debugging print statement
         target_message = await ctx.send('Who do you want to attack?', view=target_view)
         interaction = await bot.wait_for('button_click', check=lambda i: i.message.id == target_message.id and i.user.id == player.user_id)
         target_id = int(interaction.data['custom_id'])
-        target0 = players[target_id]
+        target = players[target_id]
     damage = player.attack(target)
     await ctx.send(f'{player.name} attacks {target.name} for {damage} damage!')
+
 
     def target_button_check(interaction):
         return interaction.user.id == player.user_id
