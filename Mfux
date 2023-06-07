@@ -215,16 +215,16 @@ async def solo(ctx, *, name=None):
         enemy_class = random.choice(['warrior', 'thief', 'wizard', 'bard'])
         enemy = Player(0, enemy_name, enemy_class)
         enemy.weapon = random.choice(class_weapons[enemy_class])
-        players[0] = enemy
-        players_alive[0] = enemy
-        target_buttons.append(0)
+        
+        players[enemy.id] = enemy
+        players_alive[enemy.id] = enemy
+        target_buttons.append(enemy.id)
 
         await ctx.send(f'{enemy_name}, the {enemy_class.capitalize()}, has joined the game! His weapon is: {enemy.weapon.name}.')
         
         await start_solo_game(ctx)
     else:
         await ctx.send("You have already joined the game!")
-
 async def start_solo_game(ctx):
     player = players[ctx.author.id]
     enemy = players[0]
@@ -240,8 +240,21 @@ async def start_solo_game(ctx):
     del players[0]
     del players_alive[0]
     target_buttons.remove(0)
-
-
+async def start_bot_game(ctx):
+    player = players[ctx.author.id]
+    enemy = players[0]
+    while player.hp > 0 and enemy.hp > 0:
+        await player_turn(ctx, player)
+        if enemy.hp > 0:
+            await enemy_turn(ctx, enemy)
+    if player.hp <= 0:
+        await ctx.send(f'{player.name} has died. {enemy.name} is the victor!')
+    else:
+        await ctx.send(f'{enemy.name} has died. {player.name} is the victor!')
+    del players[ctx.author.id]
+    del players[0]
+    del players_alive[0]
+    target_buttons.remove(0)  
 async def enemy_turn(ctx, enemy):
     player = players[ctx.author.id]
     if enemy.hp < 10:
@@ -249,6 +262,73 @@ async def enemy_turn(ctx, enemy):
     else:
         await handle_attack(ctx, enemy)
     await ctx.send(f'{enemy.name} has finished their turn.')
+async def handle_attack(ctx, player):
+    global target_buttons
+    if player.user_id == 0:  # This is the bot-controlled enemy
+        target = players[ctx.author.id]  # The enemy always targets the player
+    else:  # This is a real player
+        target_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+            for p in players.values() if p.user_id != player.user_id
+        ]
+        print(f"Target buttons: {target_buttons}")  # Debugging print statement
+        target_view = discord.ui.View()
+        for button in target_buttons:
+            target_view.add_item(button)
+        print(f"Target view: {target_view.children}")  # Debugging print statement
+        target_message = await ctx.send('Who do you want to attack?', view=target_view)
+        interaction = await bot.wait_for('button_click', check=lambda i: i.message.id == target_message.id and i.user.id == player.user_id)
+        target_id = int(interaction.data['custom_id'])
+        target = players[target_id]
+    damage = player.attack(target)
+    await ctx.send(f'{player.name} attacks {target.name} for {damage} damage!')
+
+
+    def target_button_check(interaction):
+        return interaction.user.id == player.user_id
+    target_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+        for i, p in enumerate(players.values())
+        if p.user_id != player.user_id or len(players) == 1  # Include self as target if only one player
+    ]
+    target_selection_view = discord.ui.View()
+    for button in target_buttons:
+        target_selection_view.add_item(button)
+    target_message = await ctx.send(f"<@{player.user_id}>, choose your target:", view=target_selection_view)
+    
+    interaction = await bot.wait_for('interaction', check=target_button_check)
+    print(interaction.data)  # Debug print
+    target_user_id = int(interaction.data['custom_id'])
+    target = players[target_user_id]
+    target.name = (await bot.fetch_user(target_user_id)).name
+
+    # Calculate damage and apply to target
+    damage = calculate_damage(player, target, spell)  # Pass the 'spell' argument to calculate_damage
+    target.hp -= damage
+
+    if player.hp < 1:
+        await interaction.response.send_message(f'{{players[interaction.user.id].name}} attacked {target.name} and dealt {damage} damage!')
+        await asyncio.sleep(1)
+        await ctx.send(f'{target.name} has died and is removed from the game!')
+        del players_alive[target.user_id]  # Remove the dead player from the players_alive dictionary
+        if len(players_alive) == 1:
+            last_player = next(iter(players_alive.values()))
+            await ctx.send(f'{last_player.name} is the last player standing and is the victor!')
+            await restart(ctx)
+
+
+    else:
+        await interaction.response.send_message(f'{players[interaction.user.id].name} attacked {target.name} and dealt {damage} damage!')
+
+
+    # Remove target selection buttons from the view
+    for child in target_selection_view.children:
+        target_selection_view.remove_item(child)
+
+    
+    # Edit the target message with the updated view
+    await target_message.edit(content=f"<@{player.user_id}>, choose your target:", view=target_selection_view)      
+
 
 async def start_game(ctx):
     # Countdown before starting the game
@@ -334,6 +414,8 @@ async def player_turn(ctx, player):
         else:
             # The player is already eliminated, end the turn
             break
+
+
 def generate_action_buttons(player):
     if player.user_id not in players:
         return []
@@ -429,71 +511,7 @@ async def hide_action(ctx, player):
         await interaction.response.send_message(f"The {player.player_class} successfully hid, dealt {damage} damage to {target_user.name}, and cannot be hit by them for 1 turn.")
     target_user = await bot.fetch_user(target_user_id)
     await target_message.edit(view=None)
-async def handle_attack(ctx, player):
-    if player.user_id == 0:  # This is the bot-controlled enemy
-        target = players[ctx.author.id]  # The enemy always targets the player
-    else:  # This is a real player
-        target_buttons = [
-            discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
-            for p in players.values() if p.user_id != player.user_id and p.user_id != 0
-        ]
-        print(f"Target buttons: {target_buttons}")  # Debugging print statement
-        target_view = discord.ui.View()
-        for button in target_buttons:
-            target_view.add_item(button)
-        print(f"Target view: {target_view.children}")  # Debugging print statement
-        target_message = await ctx.send('Who do you want to attack?', view=target_view)
-        interaction = await bot.wait_for('button_click', check=lambda i: i.message.id == target_message.id and i.user.id == player.user_id)
-        target_id = int(interaction.data['custom_id'])
-        target = players[target_id]
-    damage = player.attack(target)
-    await ctx.send(f'{player.name} attacks {target.name} for {damage} damage!')
 
-
-    def target_button_check(interaction):
-        return interaction.user.id == player.user_id
-    target_buttons = [
-        discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
-        for i, p in enumerate(players.values())
-        if p.user_id != player.user_id or len(players) == 1  # Include self as target if only one player
-    ]
-    target_selection_view = discord.ui.View()
-    for button in target_buttons:
-        target_selection_view.add_item(button)
-    target_message = await ctx.send(f"<@{player.user_id}>, choose your target:", view=target_selection_view)
-    
-    interaction = await bot.wait_for('interaction', check=target_button_check)
-    print(interaction.data)  # Debug print
-    target_user_id = int(interaction.data['custom_id'])
-    target = players[target_user_id]
-    target.name = (await bot.fetch_user(target_user_id)).name
-
-    # Calculate damage and apply to target
-    damage = calculate_damage(player, target, spell)  # Pass the 'spell' argument to calculate_damage
-    target.hp -= damage
-
-    if player.hp < 1:
-        await interaction.response.send_message(f'{{players[interaction.user.id].name}} attacked {target.name} and dealt {damage} damage!')
-        await asyncio.sleep(1)
-        await ctx.send(f'{target.name} has died and is removed from the game!')
-        del players_alive[target.user_id]  # Remove the dead player from the players_alive dictionary
-        if len(players_alive) == 1:
-            last_player = next(iter(players_alive.values()))
-            await ctx.send(f'{last_player.name} is the last player standing and is the victor!')
-            await restart(ctx)
-
-
-    else:
-        await interaction.response.send_message(f'{players[interaction.user.id].name} attacked {target.name} and dealt {damage} damage!')
-
-
-    # Remove target selection buttons from the view
-    for child in target_selection_view.children:
-        target_selection_view.remove_item(child)
-
-    
-    # Edit the target message with the updated view
-    await target_message.edit(content=f"<@{player.user_id}>, choose your target:", view=target_selection_view)    
 async def handle_cast_spell(ctx, player, spell_name):
     def target_button_check(interaction):
         return interaction.user.id == player.user_id
