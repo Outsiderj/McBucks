@@ -1,0 +1,688 @@
+
+import random
+import asyncio
+import discord
+from discord.ext import commands
+intents = discord.Intents.default()
+intents.members = True
+intents.messages = True
+intents = discord.Intents.default()
+intents.message_content = True
+spellbook = [
+    {'name': 'Fireball', 'mana_cost': 5, 'damage': lambda: random.randint(20, 30)},
+    {'name': 'Ice Blast', 'mana_cost': 4, 'damage': lambda: random.randint(15, 25)},
+    {'name': 'Thunderbolt', 'mana_cost': 6, 'damage': lambda: random.randint(25, 35)},
+    {'name': 'Acid Arrow', 'mana_cost': 3, 'damage': lambda: random.randint(10, 20)},
+    {'name': 'Magic Missile', 'mana_cost': 2, 'damage': lambda: random.randint(5, 15)},
+    {'name': 'Lightning Bolt', 'mana_cost': 7, 'damage': lambda: random.randint(30, 40)},
+    {'name': 'Cure Wounds', 'mana_cost': 3, 'heal': lambda: random.randint(10, 20)},
+    {'name': 'Strength', 'mana_cost': 4, 'buff': {'stat': 'str', 'amount': 5}},
+    {'name': 'Fire Shield', 'mana_cost': 5, 'buff': {'stat': 'defense', 'amount': 10}},
+    {'name': 'Magic Shield', 'mana_cost': 4, 'buff': {'stat': 'wis', 'amount': 5}}
+]
+songbook = [
+    {'name': 'Eye of the Beholder', 'heal': lambda: random.randint(10, 20)},
+    {'name': 'Sympathy for Cthulu', 'damage': lambda: random.randint(10,20)},
+    {'name': 'Funky Cold Edinia', 'damage': lambda: random.randint(15, 25)},
+    {'name': 'Midtown Orc', 'buff': {'stat': 'defense', 'amount': lambda: random.randint(1, 10)}}
+]
+random.shuffle(songbook)
+intents.message_content = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+players ={}
+players_alive = {}
+target_buttons = []
+default_names = ["Aerith", "Barrowin", "Cassius", "Eldeth", "Gorion", "Himo", "Jarek",
+        "Kethryllia", "Lia", "Milo", "Nerys", "Pikel", "Rolen", "Shandie",
+        "Talindra", "Ugi"]
+
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+def roll_dice(num_sides):
+    return random.choice(range(1, num_sides+1))  
+class Weapon:
+    def __init__(self, name, damage_range):
+        self.name = name
+        self.damage_range = damage_range
+
+    def roll_damage(self):
+        return random.randint(*self.damage_range)
+class_weapons = {
+    "warrior": [Weapon("Sword", (2, 10)), Weapon("Mace", (1, 8)), Weapon("Axe", (1, 12)), Weapon("Warhammer", (2, 10))],
+    "thief": [Weapon("Knife", (1, 6)), Weapon("Rusty Poopknife", (1, 8)), Weapon("Shiv", (1, 10))],
+    "wizard": [Weapon("Wizard's Staff", (1, 4))],
+    "bard": [Weapon("Lute of Destiny", (1, 5))]
+}  
+class Player:  
+    def __init__(self, user_id, player_class, name):
+        self.user_id = user_id
+        self.name = name
+        self.player_class = player_class
+        self.weapon = None
+        self.id = user_id
+        self.stats = self.generate_stats()
+        self.spells = self.generate_initial_spells()
+        self.hp = self.calculate_initial_hp()
+        self.has_cast_spell = False
+        self.hit_bonus = 0
+        self.songs = self.generate_initial_songs()        
+        self.mana = 0
+        self.hidden = False
+        self.is_dodging = False
+        self.turn_ended = False
+          # Call the allocate_weapons method to assign a weapon
+        self.inventory = {
+        'healing_potion': 2,
+        'mana_potion': 2
+    }
+        if self.player_class == 'wizard':
+            self.mana = self.calculate_initial_mana()
+            self.spells = self.generate_initial_spells()
+        else:
+            self.spells = []
+     
+    def set_damage_modifier(self):
+        total_damage = sum(weapon.damage_range[1] for weapon in self.weapons.values())
+        self.damage_modifier = 1 + (total_damage / 100)
+    def calculate_initial_mana(self):
+    # Calculate initial mana based on wisdom (WIS) modifier
+        wis_modifier = (self.stats['wis'] - 10) // 2
+        return 10 + wis_modifier
+    def generate_initial_songs(self):
+        return self.assign_songs() 
+    def assign_songs(self):
+        if self.player_class == 'bard':
+            return random.sample(songbook, 3)
+        else:
+            return []                      
+    def generate_initial_spells(self):
+        return self.assign_spells() 
+    def assign_spells(self):
+        if self.player_class == 'wizard':
+            return random.sample(spellbook, 3)
+        else:
+            return []                      
+    def add_random_spell(self):
+        available_spells = [spell for spell in spellbook if spell not in self.spells]
+        if available_spells:
+            new_spell = random.choice(available_spells)
+            self.spells.append(new_spell)          
+    def generate_stats(self):
+        base_stats = {
+            'str': random.randint(1, 20),
+            'dex': random.randint(1, 20),
+            'agi': random.randint(1, 20),
+            'wis': random.randint(1, 20),
+            'defense': random.randint(1, 20),
+            'cha': random.randint(1, 20),
+            'con': random.randint(1, 20)
+        }
+        if self.player_class == 'warrior':
+            base_stats['str'] += 5
+            base_stats['defense'] += 5
+        elif self.player_class == 'thief':
+            base_stats['dex'] += 5
+            base_stats['agi'] += 5
+        elif self.player_class == 'bard':
+            base_stats['cha'] += 5
+            base_stats['dex'] += 3
+            base_stats['wis'] += 2
+        elif self.player_class == 'wizard':
+            base_stats['wis'] += 5
+            base_stats['defense'] += 2
+        return base_stats
+    def calculate_initial_hp(self):
+        con_modifier = (self.stats['con'] - 10) // 2
+        return 35 + con_modifier
+global game_started
+game_started = False
+countdown_started = False      
+
+@bot.command()
+async def join(ctx, *, name=None):
+    global players
+    if ctx.author.id not in players:
+        if name is None:
+            name = random.choice(["Aerith", "Barrowin", "Cassius", "Eldeth", "Gorion", "Himo", "Jarek", "Kethryllia", "Lia", "Milo", "Nerys", "Pikel", "Rolen", "Shandie", "Talindra", "Ugi"])
+        elif len(name.split(' ')) > 3 or len(name) > 30:
+            await ctx.send("Invalid name. Please enter a name with up to 30 characters and a maximum of 2 spaces.")
+            return
+
+        def class_selection_button_check(interaction):
+            return interaction.user.id == ctx.author.id
+
+        # Create class selection buttons
+        class_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='⚔️ Warrior', custom_id='warrior'),
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='🗝️ Thief', custom_id='thief'),
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='🎶 Bard', custom_id='bard'),
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='🧙 Wizard', custom_id='wizard')
+        ]
+
+        # Create a view with the class selection buttons
+        class_selection_view = discord.ui.View()
+        for button in class_buttons:
+            class_selection_view.add_item(button)
+
+        await ctx.send("Please choose your class:", view=class_selection_view)
+
+        # Wait for the user to select a class
+        interaction = await bot.wait_for('interaction', check=class_selection_button_check)
+        player_class = interaction.data['custom_id']
+
+        # Create a new player and add them to the game
+        player = Player(ctx.author.id, name, player_class)
+        player.weapon = random.choice(class_weapons[player_class])
+        weapon_name = player.weapon.name
+        players[ctx.author.id] = player
+        await interaction.response.send_message(f'You have chosen the {player_class.capitalize()} class, your weapon is: {weapon_name}. Welcome to the game!')
+        await ctx.send(f"{name} has joined the game!")
+    else:
+        await ctx.send("You have already joined the game!")
+
+    if len(players) >= 6:
+        await ctx.send("The maximum number of players have already joined. You cannot join now.")
+        return
+
+    global countdown_started
+    if len(players) >= 2 and not game_started and not countdown_started:
+        countdown_started = True
+        asyncio.create_task(start_game(ctx))
+@bot.command()
+async def solo(ctx, *, name=None):
+    global players
+    global players_alive
+    global target_buttons 
+
+    if ctx.author.id not in players:
+        if name is None:
+            name = random.choice(default_names)
+        elif len(name.split(' ')) > 3 or len(name) > 30:
+            await ctx.send("Invalid name. Please enter a name with up to 30 characters and a maximum of 2 spaces.")
+            return
+        player_class = random.choice(['warrior', 'thief', 'wizard', 'bard'])
+        player = Player(ctx.author.id, name, player_class)
+        player.weapon = random.choice(class_weapons[player_class])
+        weapon_name = player.weapon.name
+        players[ctx.author.id] = player
+
+        await ctx.send(f'You have chosen the {player_class.capitalize()} class, your weapon is: {weapon_name}. Welcome to the game!')
+        await ctx.send(f"{name} has joined the game!")
+
+        enemy_name = random.choice(['Drunk Dwarf', 'Tweaker Elf', 'Hill Yinzer', 'Angry Loudmouth'])
+        enemy_class = random.choice(['warrior', 'thief', 'wizard', 'bard'])
+        enemy = Player(0, enemy_name, enemy_class)
+        enemy.weapon = random.choice(class_weapons[enemy_class])
+        
+        players[enemy.id] = enemy
+        players_alive[enemy.id] = enemy
+        target_buttons.append(enemy.id)
+
+        await ctx.send(f'{enemy_name}, the {enemy_class.capitalize()}, has joined the game! His weapon is: {enemy.weapon.name}.')
+        
+        await start_solo_game(ctx)
+    else:
+        await ctx.send("You have already joined the game!")
+async def start_solo_game(ctx):
+    player = players[ctx.author.id]
+    enemy = players[0]
+    while player.hp > 0 and enemy.hp > 0:
+        await player_turn(ctx, player)
+        if enemy.hp > 0:
+            await enemy_turn(ctx, enemy)
+    if player.hp <= 0:
+        await ctx.send(f'{player.name} has died. {enemy.name} is the victor!')
+    else:
+        await ctx.send(f'{enemy.name} has died. {player.name} is the victor!')
+    del players[ctx.author.id]
+    del players[0]
+    del players_alive[0]
+    target_buttons.remove(0)
+async def start_bot_game(ctx):
+    player = players[ctx.author.id]
+    enemy = players[0]
+    while player.hp > 0 and enemy.hp > 0:
+        await player_turn(ctx, player)
+        if enemy.hp > 0:
+            await enemy_turn(ctx, enemy)
+    if player.hp <= 0:
+        await ctx.send(f'{player.name} has died. {enemy.name} is the victor!')
+    else:
+        await ctx.send(f'{enemy.name} has died. {player.name} is the victor!')
+    del players[ctx.author.id]
+    del players[0]
+    del players_alive[0]
+    target_buttons.remove(0)  
+async def enemy_turn(ctx, enemy):
+    player = players[ctx.author.id]
+    if enemy.hp < 10:
+        await handle_heal(ctx, enemy)
+    else:
+        await handle_attack(ctx, enemy)
+    await ctx.send(f'{enemy.name} has finished their turn.')
+async def handle_attack(ctx, player):
+    global target_buttons
+    if player.user_id == 0:  # This is the bot-controlled enemy
+        target = players[ctx.author.id]  # The enemy always targets the player
+    else:  # This is a real player
+        target_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+            for p in players.values() if p.user_id != player.user_id
+        ]
+        print(f"Target buttons: {target_buttons}")  # Debugging print statement
+        target_view = discord.ui.View()
+        for button in target_buttons:
+            target_view.add_item(button)
+        print(f"Target view: {target_view.children}")  # Debugging print statement
+        target_message = await ctx.send('Who do you want to attack?', view=target_view)
+        interaction = await bot.wait_for('button_click', check=lambda i: i.message.id == target_message.id and i.user.id == player.user_id)
+        target_id = int(interaction.data['custom_id'])
+        target = players[target_id]
+    damage = player.attack(target)
+    await ctx.send(f'{player.name} attacks {target.name} for {damage} damage!')
+
+
+    def target_button_check(interaction):
+        return interaction.user.id == player.user_id
+    target_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+        for i, p in enumerate(players.values())
+        if p.user_id != player.user_id or len(players) == 1  # Include self as target if only one player
+    ]
+    target_selection_view = discord.ui.View()
+    for button in target_buttons:
+        target_selection_view.add_item(button)
+    target_message = await ctx.send(f"<@{player.user_id}>, choose your target:", view=target_selection_view)
+    
+    interaction = await bot.wait_for('interaction', check=target_button_check)
+    print(interaction.data)  # Debug print
+    target_user_id = int(interaction.data['custom_id'])
+    target = players[target_user_id]
+    target.name = (await bot.fetch_user(target_user_id)).name
+
+    # Calculate damage and apply to target
+    damage = calculate_damage(player, target, spell)  # Pass the 'spell' argument to calculate_damage
+    target.hp -= damage
+
+    if player.hp < 1:
+        await interaction.response.send_message(f'{{players[interaction.user.id].name}} attacked {target.name} and dealt {damage} damage!')
+        await asyncio.sleep(1)
+        await ctx.send(f'{target.name} has died and is removed from the game!')
+        del players_alive[target.user_id]  # Remove the dead player from the players_alive dictionary
+        if len(players_alive) == 1:
+            last_player = next(iter(players_alive.values()))
+            await ctx.send(f'{last_player.name} is the last player standing and is the victor!')
+            await restart(ctx)
+
+
+    else:
+        await interaction.response.send_message(f'{players[interaction.user.id].name} attacked {target.name} and dealt {damage} damage!')
+
+
+    # Remove target selection buttons from the view
+    for child in target_selection_view.children:
+        target_selection_view.remove_item(child)
+
+    
+    # Edit the target message with the updated view
+    await target_message.edit(content=f"<@{player.user_id}>, choose your target:", view=target_selection_view)      
+
+
+async def start_game(ctx):
+    # Countdown before starting the game
+    countdown_seconds = 10
+    countdown_message = await ctx.send(f'The game will start in {countdown_seconds} seconds...')
+    global game_started
+    global countdown_started
+    for i in range(countdown_seconds - 1, 0, -1):
+        await asyncio.sleep(1)
+        await countdown_message.edit(content=f'The game will start in {i} seconds...')
+        if game_started:
+            return
+    await countdown_message.edit(content='The game has started!')
+    game_started = True
+    countdown_started = False
+    players_alive = list(players.values())
+    while len(players_alive) > 1:
+        turn_order = sorted(players_alive, key=lambda p: p.stats['agi'], reverse=True)
+        for player in turn_order:
+            if player in players_alive:  # Check if the player is still alive
+                await player_turn(ctx, player)
+                if player.hp < 1:
+                    await ctx.send(f'{player.name} has died and is removed from the game!')
+                    players_alive.remove(player)  # Remove the dead player from the players_alive list
+                    if len(players_alive) == 1:
+                        last_player = players_alive[0]
+                        await ctx.send(f'{last_player.name} is the last player standing and is the victor!')
+                        await restart(ctx)
+                    break  # Skip the remaining turns if the player is eliminated
+async def player_turn(ctx, player):
+    effect = None
+    def action_button_check(interaction):
+        return interaction.user.id == player.user_id
+    action_buttons = generate_action_buttons(player)
+    action_view = discord.ui.View()
+    for button in action_buttons:
+        action_view.add_item(button)
+    heal_button = discord.ui.Button(style=discord.ButtonStyle.green, label='Heal', custom_id='heal')
+    hide_button = discord.ui.Button(style=discord.ButtonStyle.blurple, label="Hide", custom_id="hide")
+    action_buttons.append(heal_button)
+    turn_ended = False
+    while not turn_ended:
+        # Check if the player is still alive before sending turn notifications
+        if player.hp > 0:
+            # Send the action buttons to the player
+            action_message = await ctx.send(f"<@{player.user_id}>, it's your turn! Choose an action:", view=action_view)
+
+            # Wait for the player to choose an action
+            interaction = await bot.wait_for('interaction', check=action_button_check)
+            action = interaction.data['custom_id']
+
+            # Handle the chosen action
+            if action == 'stats':
+                await handle_show_stats(ctx, player)
+            elif action == 'attack':
+                await handle_attack(ctx, player)
+                turn_ended = True
+            elif action in ['dodge']:
+                await dodge_action(ctx, player, interaction)
+                turn_ended = True
+            elif action in ['hide']:
+                await hide_action(ctx, player)
+                turn_ended = True
+            elif action == 'use_item':
+                await handle_use_item(ctx, player)
+                turn_ended = True
+            elif action in [spell['name'] for spell in player.spells]:
+                await handle_cast_spell(ctx, player, action)
+                turn_ended = True
+            if player.player_class == 'wizard' and action not in [spell['name'] for spell in player.spells]:
+                player.add_random_spell()          
+            elif action == 'heal':
+                await handle_heal(ctx, player)
+                turn_ended = True
+            elif action in [song['name'] for song in player.songs]:
+                await handle_perform_song(ctx, player, action)
+                turn_ended = True
+            # Check if the player has died
+            if player.hp < 1:
+                await action_message.edit(content='You are eliminated and will no longer receive turn notifications.', view=None)
+                break
+            await action_message.edit(view=None)
+        else:
+            # The player is already eliminated, end the turn
+            break
+
+
+def generate_action_buttons(player):
+    if player.user_id not in players:
+        return []
+    # Check if the player is still alive
+    if player.hp < 1:
+        return []
+    hp_text = f'HP: {player.hp}/{player.calculate_initial_hp()}'
+    mana_text = ''
+    
+    if player.player_class == 'wizard':
+        mana_text = f'Mana: {player.mana}/{player.calculate_initial_mana()}'
+    
+        
+    hp_mana_row = discord.ui.Button(style=discord.ButtonStyle.blurple, label=f'{hp_text}  {mana_text}', disabled=True)
+    action_buttons = [hp_mana_row]
+    common_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.blurple, label='Attack', custom_id='attack'),
+        discord.ui.Button(style=discord.ButtonStyle.blurple, label='Use Item', custom_id='use_item'),
+        discord.ui.Button(style=discord.ButtonStyle.blurple, label='Stats', custom_id='stats')
+    ]
+    action_row = common_buttons  # Initialize action_row with the common buttons
+
+    if player.player_class == 'warrior':
+        class_specific_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='Dodge', custom_id='dodge')
+        ]
+        action_row += class_specific_buttons  # Add the class-specific buttons to action_row
+
+    elif player.player_class == 'thief':
+        class_specific_buttons = [
+            discord.ui.Button(style=discord.ButtonStyle.blurple, label='Hide', custom_id='hide')
+        ]
+        action_row += class_specific_buttons  # Add the class-specific buttons to action_row
+
+    elif player.player_class == 'bard':
+        class_specific_buttons = [
+            discord.ui.Button(
+                style=discord.ButtonStyle.red if song and 'damage' in song else 
+                      discord.ButtonStyle.green if song and 'heal' in song else 
+                      discord.ButtonStyle.blurple,
+                label=song['name'], 
+                custom_id=song['name']
+            )
+            for song in player.songs
+        ]
+        action_row += class_specific_buttons
+    elif player.player_class == 'wizard':
+        class_specific_buttons = [
+            discord.ui.Button(
+                style=discord.ButtonStyle.red if 'damage' in spell else 
+                      discord.ButtonStyle.green if 'heal' in spell else 
+                      discord.ButtonStyle.blurple,
+                label=spell['name'], 
+                custom_id=spell['name']
+            )
+            for spell in player.spells
+        ]
+        action_row += class_specific_buttons  # Add the class-specific buttons to action_row
+
+    if player.weapon is not None:
+        weapon_row = discord.ui.Button(style=discord.ButtonStyle.blurple, label=f'Weapon: {player.weapon.name}', disabled=True)
+    else:
+        weapon_row = discord.ui.Button(style=discord.ButtonStyle.blurple, label='Weapon: Not allocated', disabled=True)
+
+    return [hp_mana_row, weapon_row] + action_row
+async def hide_action(ctx, player):
+    def target_button_check(interaction):
+        return interaction.user.id == player.user_id
+    # Create target selection buttons
+    target_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+        for p in players.values()
+        if p.user_id != player.user_id or len(players) == 1  # Include self as target if only one player
+    ]
+    target_selection_view = discord.ui.View()
+    for button in target_buttons:
+        target_selection_view.add_item(button)
+    target_message = await ctx.send(f"<@{player.user_id}>, choose your target:", view=target_selection_view)
+    interaction = await bot.wait_for('interaction', check=target_button_check)
+    target_user_id = int(interaction.data['custom_id'])
+    target = players[target_user_id]
+    target_user = await bot.fetch_user(target_user_id)
+    # Handle hide
+    # Roll the dice to determine the success of hiding
+    dice_roll = random.randint(1, 20)
+    if dice_roll <= 9:  # Unsuccessful hiding
+        await interaction.response.send_message(f"The {player.player_class} attempted to hide but failed.")
+    elif dice_roll <= 19:  # Successful hiding
+        await interaction.response.send_message(f"The {player.player_class} successfully hid and cannot be hit by {target_user.name} for 1 turn.")
+    else:  # Critical success (natural 20)
+        damage = 6
+        target.hp -= damage
+        await interaction.response.send_message(f"The {player.player_class} successfully hid, dealt {damage} damage to {target_user.name}, and cannot be hit by them for 1 turn.")
+    target_user = await bot.fetch_user(target_user_id)
+    await target_message.edit(view=None)
+
+async def handle_cast_spell(ctx, player, spell_name):
+    def target_button_check(interaction):
+        return interaction.user.id == player.user_id
+
+    target_selection_view = discord.ui.View()
+
+    async def handle_target_selection(interaction):
+        target_custom_id = interaction.data['custom_id']
+
+        for child in target_selection_view.children:
+            target_selection_view.remove_item(child)
+
+        if target_custom_id == 'self' and player.player_class == 'wizard':
+            target = player
+        else:
+            target_user_id = int(target_custom_id)
+            target = players[target_user_id]
+            target.name = (await bot.fetch_user(target_user_id)).name
+
+        damage = calculate_damage(player, target)
+        target.hp -= damage
+        if target.hp < 1:
+          await interaction.response.send_message(f'{players[interaction.user.id].name} attacked {target.name} and dealt {damage} damage!')
+          await asyncio.sleep(1)
+          await ctx.send(f'{target.name} has died and is removed from the game!')
+          players_alive.remove(target)  # Remove the dead player from the players_alive list
+    if len(players_alive) == 1:
+        last_player = players_alive[0]
+        await ctx.send(f'{last_player.name} is the last player standing and is the victor!')
+        await restart(ctx)
+        spell = next((s for s in player.spells if s['name'] == spell_name), None)
+        mana_cost = spell.get('mana_cost', 0)
+        if player.player_class == 'wizard' and player.mana < mana_cost:
+            await ctx.send("You don't have enough mana to cast this spell.")
+            return
+        if player.player_class == 'wizard':
+            player.mana -= mana_cost
+        if 'damage' in spell:
+            base_damage = spell['damage']()
+            wisdom_bonus = player.stats['wis'] // 2  # Wisdom bonus calculation
+            total_damage = base_damage + wisdom_bonus
+            damage = calculate_damage(player, target)
+            target.hp -= damage
+            await ctx.send(f'{players[interaction.user.id].name} cast {spell["name"]} on {target.name} and dealt {total_damage} damage!')
+        elif 'heal' in spell:
+            base_heal = spell['heal']()
+            wisdom_bonus = player.stats['wis'] // 2  # Wisdom bonus calculation
+            total_heal = base_heal + wisdom_bonus
+            target.hp += total_heal
+            await ctx.send(f'{players[interaction.user.id].name} cast {spell["name"]} and healed {target.name} for {total_heal} HP!')
+        elif 'buff' in spell:
+            buff_stat = spell['buff']['stat']
+            buff_amount = spell['buff']['amount'] + (player.stats['wis'] // 2)  # Wisdom bonus applied to buff amount
+            target.stats[buff_stat] += buff_amount
+            await ctx.send(f'{players[interaction.user.id].name} cast {spell["name"]} and buffed {target.name}')
+
+        for child in target_selection_view.children:
+            target_selection_view.remove_item(child)
+
+    target_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.red, label=f'{(await bot.fetch_user(p.user_id)).name} - {p.player_class.capitalize()}', custom_id=str(p.user_id))
+        for i, p in enumerate(players.values())
+        if p.user_id != player.user_id
+    ]
+    if player.player_class == 'wizard':
+        target_buttons.append(discord.ui.Button(style=discord.ButtonStyle.red, label='Self', custom_id='self'))
+
+    for button in target_buttons:
+        target_selection_view.add_item(button)
+
+    target_message = await ctx.send(f"<@{player.user_id}>, choose your target:", view=target_selection_view)
+    interaction = await bot.wait_for('interaction', check=target_button_check)
+    await handle_target_selection(interaction)
+    await target_message.delete()
+async def handle_perform_song(ctx, player, song_name):
+    song = next((s for s in player.songs if s['name'] == song_name), None)
+
+    if 'damage' in song:
+        base_damage = song['damage']
+        damage = calculate_damage(player, None, song=song)
+
+        for target_user_id, target in players.items():
+            if target_user_id != player.user_id: # Skip the bard
+                target.hp -= damage
+                total_damage = base_damage
+            if target.hp < 1:
+                await interaction.response.send_message(f'{players[interaction.user.id].name} attacked {target.name} and dealt {damage} damage!')
+                await asyncio.sleep(1)
+                await ctx.send(f'{target.name} has died and is removed from the game!')
+                players_alive.remove(target)  # Remove the dead player from the players_alive list
+                if len(players_alive) == 1:
+                    last_player = players_alive[0]
+                    await ctx.send(f'{last_player.name} is the last player standing and is the victor!')
+                    await restart(ctx)
+
+                else:
+                    target.name = (await bot.fetch_user(target_user_id)).name
+                    await ctx.send(f'The Bard performed the worst rendition of {song["name"]} and dealt {damage} damage to a stunned audience!')
+
+    elif 'heal' in song:
+        base_heal = song['heal']()
+        heal = song['heal']()
+        player.hp += heal
+        total_heal = base_heal
+        await ctx.send(f'The bard performed {song["name"]} for no one but themselves and healed for {total_heal} HP!')
+
+    elif 'buff' in song:
+        buff_stat = song['buff']['stat']
+        buff_amount = song['buff']['amount']()
+        player.stats[buff_stat] += buff_amount
+        await ctx.send(f'The bard takes a swig o grog and belts out a perfectly performed {song["name"]} and is totally proud of themselves and have raised their {buff_stat} by {buff_amount} out of sheer confidence!')
+async def handle_use_item(ctx, player):
+    def item_button_check(interaction):
+        return interaction.user.id == player.user_id
+    item_buttons = [
+        discord.ui.Button(style=discord.ButtonStyle.green, label=f"Healing Potion x{player.inventory['healing_potion']}", custom_id='healing_potion'),
+        discord.ui.Button(style=discord.ButtonStyle.green, label=f"Mana Potion x{player.inventory['mana_potion']}", custom_id='mana_potion')
+    ]
+    item_selection_view = discord.ui.View()
+    for button in item_buttons:
+        item_selection_view.add_item(button)
+    item_message = await ctx.send(f"<@{player.user_id}>, choose an item to use:", view=item_selection_view)
+    interaction = await bot.wait_for('interaction', check=item_button_check)
+    item = interaction.data['custom_id']
+    if item == 'healing_potion':
+        if player.inventory['healing_potion'] > 0:
+            player.inventory['healing_potion'] -= 1
+            potential_heal_amount = random.randint(10, 30)
+            initial_hp = player.calculate_initial_hp()
+            new_hp = min(player.hp + potential_heal_amount, initial_hp)
+            actual_heal_amount = new_hp - player.hp  # Calculate the actual heal amount
+            player.hp = new_hp
+            await interaction.response.send_message(f'You used a Healing Potion and restored {actual_heal_amount} HP!')
+        else:
+            await interaction.response.send_message("You don't have any Healing Potions left.")
+
+    elif item == 'mana_potion':
+        if player.inventory['mana_potion'] > 0:
+            player.inventory['mana_potion'] -= 1
+            mana_amount = random.randint(10, 30)
+            # Assuming you have a mana attribute in the player class
+            player.mana = min(player.mana + mana_amount, player.calculate_initial_mana())
+            await interaction.response.send_message(f'You used a Mana Potion and restored {mana_amount} mana!')
+        else:
+            await interaction.response.send_message("You don't have any Mana Potions left.")
+    else:
+        await interaction.response.send_message("Invalid item selected.")
+    await item_message.edit(view=None)  
+  
+def calculate_damage(player, target, spell=None, song=None):
+    base_damage = 0
+    if player.weapon:
+        base_damage = player.weapon.roll_damage()
+    if player.player_class == 'wizard' and spell is not None:
+        wis_modifier = (player.stats['wis'] - 10) // 2
+        spell_damage = random.randint(spell['damage_range'][0], spell['damage_range'][1])
+        total_damage = wis_modifier + spell_damage
+        return total_damage
+    elif player.player_class == 'bard' and song is not None:
+        song_damage = song['damage']()
+        total_damage = song_damage
+        return total_damage
+    else:
+        return int(player.stats['str'])
+
+
+@bot.command()
+async def restart(ctx):
+    global players
+    if len(players) > 0:
+        players = {}
+        await ctx.send("The game has been restarted and all players have been removed.")
+    else:
+        await ctx.send("There are no players in the game.")
