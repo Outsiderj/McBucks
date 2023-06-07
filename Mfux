@@ -32,6 +32,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 players ={}
 players_alive = {}
+target_buttons = []
 default_names = ["Aerith", "Barrowin", "Cassius", "Eldeth", "Gorion", "Himo", "Jarek",
         "Kethryllia", "Lia", "Milo", "Nerys", "Pikel", "Rolen", "Shandie",
         "Talindra", "Ugi"]
