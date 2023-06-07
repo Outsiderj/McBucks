@@ -192,6 +192,9 @@ async def join(ctx, *, name=None):
 @bot.command()
 async def solo(ctx, *, name=None):
     global players
+    global players_alive
+    global target_buttons 
+
     if ctx.author.id not in players:
         if name is None:
             name = random.choice(default_names)
@@ -203,14 +206,20 @@ async def solo(ctx, *, name=None):
         player.weapon = random.choice(class_weapons[player_class])
         weapon_name = player.weapon.name
         players[ctx.author.id] = player
+
         await ctx.send(f'You have chosen the {player_class.capitalize()} class, your weapon is: {weapon_name}. Welcome to the game!')
         await ctx.send(f"{name} has joined the game!")
+
         enemy_name = random.choice(['Drunk Dwarf', 'Tweaker Elf', 'Hill Yinzer', 'Angry Loudmouth'])
         enemy_class = random.choice(['warrior', 'thief', 'wizard', 'bard'])
         enemy = Player(0, enemy_name, enemy_class)
         enemy.weapon = random.choice(class_weapons[enemy_class])
         players[0] = enemy
+        players_alive[0] = enemy
+        target_buttons.append(0)
+
         await ctx.send(f'{enemy_name}, the {enemy_class.capitalize()}, has joined the game! His weapon is: {enemy.weapon.name}.')
+        
         await start_solo_game(ctx)
     else:
         await ctx.send("You have already joined the game!")
@@ -228,6 +237,9 @@ async def start_solo_game(ctx):
         await ctx.send(f'{enemy.name} has died. {player.name} is the victor!')
     del players[ctx.author.id]
     del players[0]
+    del players_alive[0]
+    target_buttons.remove(0)
+
 
 async def enemy_turn(ctx, enemy):
     player = players[ctx.author.id]
